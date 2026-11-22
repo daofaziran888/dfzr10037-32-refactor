@@ -73,6 +73,34 @@ def export_entries(
     )
 
 
+@router.get("/{module}/review", response_model=dict)
+def get_review_list(
+    module: str,
+    entity_number: str | None = Query(default=None, alias="实体编号"),
+    version: str | None = Query(default=None, alias="实体版本"),
+    ingest_id: str | None = Query(default=None, alias="入库记录编号"),
+) -> dict[str, Any]:
+    """实体链接待复核清单 / 关系建模待审清单：都从共享实体证据派生。"""
+    service = require_service(module)
+    reviewer = getattr(service, "review_list", None)
+    if reviewer is not None:
+        return reviewer(entity_number=entity_number, version=version)
+    pending = getattr(service, "pending_list", None)
+    if pending is not None:
+        return pending(ingest_id=ingest_id, version=version)
+    raise HTTPException(status_code=404, detail=f"{module} 没有待审清单")
+
+
+@router.get("/{module}/recover", response_model=dict)
+def recover_candidates(module: str) -> dict[str, Any]:
+    """重新打开链接工作台：恢复没有版本回指的旧链接候选。"""
+    service = require_service(module)
+    recover = getattr(service, "recover_candidates", None)
+    if recover is None:
+        raise HTTPException(status_code=404, detail=f"{module} 没有可恢复的旧候选")
+    return recover()
+
+
 @router.get("/{module}/{entry_id}", response_model=dict)
 def get_entry(module: str, entry_id: int) -> dict[str, Any]:
     service = require_service(module)
@@ -80,6 +108,22 @@ def get_entry(module: str, entry_id: int) -> dict[str, Any]:
     if entry is None:
         raise HTTPException(status_code=404, detail=f"{service.ENTITY} {entry_id} 不存在或已归档")
     return entry
+
+
+@router.get("/{module}/{entry_id}/evidence", response_model=dict)
+def get_evidence_inputs(module: str, entry_id: int, ref: str | None = Query(default=None)) -> dict[str, Any]:
+    """任一路都能查到实际用于生成它的实体证据输入。"""
+    service = require_service(module)
+    lookup = getattr(service, "evidence_inputs_for", None)
+    if lookup is None:
+        raise HTTPException(status_code=404, detail=f"{module} 不消费实体证据")
+    entry = service.get_entry(entry_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"{service.ENTITY} {entry_id} 不存在或已归档")
+    inputs = lookup(entry, ref)
+    if inputs is None:
+        raise HTTPException(status_code=404, detail="未找到该记录对应的实体证据")
+    return inputs
 
 
 @router.post("/{module}", response_model=ActionResult)
